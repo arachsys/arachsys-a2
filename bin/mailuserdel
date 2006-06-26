@@ -1,0 +1,20 @@
+#!/bin/sh
+
+if [ $# -ne 2 ]; then
+  cat <<EOF >&2
+Usage: mailuserdel IP USERNAME
+EOF
+  exit 1
+fi
+
+TMPDIR=${TMPDIR:-/tmp}
+TMPFILE=`mktemp "$TMPDIR/mailuserdel.XXXXXX"` || exit 1
+trap "rm -f -- \"$TMPFILE\"" 0 1 2 15
+
+HOSTADDR=$1
+USERNAME=$2
+
+mailconfig -pr -- "$HOSTADDR" >"$TMPFILE" || exit 1
+perl -pi -e "s/^\Q$USERNAME\E(:.*|)$//s;" "$TMPFILE"
+mailconfig -pws -- "$HOSTADDR" <"$TMPFILE" || exit 1
+echo "Mail configuration successfully updated" >&2

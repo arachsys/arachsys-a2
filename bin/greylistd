@@ -1,0 +1,135 @@
+#!/bin/perl -w
+
+# Connect and write a key rcpt-address:sender-address:host-address to the
+# greylist socket. A status string is returned: 'true' indicates the
+# sender-address is whitelisted for host-address, and 'false' indicates
+# that it is (still) in the greylist.
+#
+# In exim.conf, use a socket item in the ACL condition:
+#   ${readsocket {/var/lib/greylist.db} \
+#      {$local_part@$domain\n$sender_address\n$sender_host_address} \
+#      {5s}{\n}{true}}
+
+use DB_File;
+use File::Basename;
+use POSIX qw(setsid);
+use Socket;
+use strict;
+
+my $greylist_db = "/var/lib/greylist.db";
+my $greylist_pid = '/var/run/greylistd.pid';
+my $greylist_socket = '/var/run/greylistd';
+
+my $confirmdelay = 4*60;
+my $unconfirmedtimeout = 25*60*60;
+my $confirmedtimeout =  60*24*60*60;
+my $expiryincrement = 10;
+
+my %greylist;
+
+sub expire () {
+  my $now = time;
+  my ($key, $value);
+  for (my $count = $expiryincrement; $count > 0; $count--) {
+    next unless (($key, $value) = each %greylist);
+    my ($first, $last) = unpack "LL", $value;
+    my $timeout = $key =~ /\s.*\s/ ? $unconfirmedtimeout
+                                   : $confirmedtimeout;
+    delete $greylist{$key} if $last + $timeout < $now;
+  }
+}
+
+sub result ($$) {
+  my ($client, $result) = @_;
+  syswrite $client, $result;
+  close $client;
+  expire;
+  (tied %greylist)->sync();
+}
+
+$0 = basename $0;
+$SIG{__DIE__} = sub { die "$0: $_[0]"; };
+$SIG{__WARN__} = sub { warn "$0: $_[0]"; };
+$SIG{INT} = $SIG{TERM} = sub { exit 1; };
+
+tie %greylist, "DB_File", $greylist_db, O_CREAT | O_RDWR, 0600, $DB_HASH
+  or die "$greylist_db: $!\n";
+
+umask 0007;
+if (-e $greylist_socket) {
+  unlink($greylist_socket) or die "unlink $greylist_socket: $!\n";
+}
+socket(SERVER, PF_UNIX, SOCK_STREAM, 0) or die "socket: $!\n";
+bind(SERVER, sockaddr_un($greylist_socket)) or die "bind: $!\n";
+my $mailuid = getpwnam "mail";
+my $mailgid = getgrnam "mail";
+chown $mailuid, $mailgid, $greylist_socket;
+
+$SIG{PIPE} = 'IGNORE';
+listen(SERVER, SOMAXCONN) or die "listen: $!\n";
+
+$> = getpwnam "nobody";
+$) = getgrnam "nogroup";
+my $pid = fork;
+defined $pid or die "fork: $!\n";
+if ($pid > 0) {
+  $> = $<;
+  $) = $(;
+  umask 0022;
+  if (open PIDFILE, ">$greylist_pid") {
+    print PIDFILE "$pid\n";
+    close PIDFILE;
+  }
+  exit 0;
+}
+close STDIN and open STDIN, "/dev/null";
+close STDOUT and open STDOUT, ">/dev/null";
+close STDERR and open STDERR, ">/dev/null";
+setsid;
+
+while (accept(CLIENT, SERVER)) {
+  sysread CLIENT, my $key, 16384;
+  my ($recipient, $sender, $host) = split /\n/, lc $key;
+  my $senderdomain;
+
+  if ($sender eq "") {
+    $sender = "<>";
+    $senderdomain = "<>";
+  } else {
+    $senderdomain = (split /@/, $sender)[1];
+    $senderdomain = "UNQUALIFIED" if $senderdomain eq "";
+  }
+
+  my $fullkey = "$recipient $sender $host";
+  my $domkey = "$senderdomain $host";
+  my $now = time;
+
+  if (exists $greylist{$domkey}) {
+    my ($first, $last) = unpack "LL", $greylist{$domkey};
+    if ($now > $last + $confirmedtimeout) {
+      delete $greylist{$domkey};
+    } else {
+      $greylist{$domkey} = pack "LL", $first, $now;
+      result *CLIENT, "true";
+      next;
+    }
+  }
+
+  if (exists $greylist{$fullkey}) {
+    my ($first, $last) = unpack "LL", $greylist{$fullkey};
+    if ($now > $last + $unconfirmedtimeout) {
+      delete $greylist{$fullkey};
+    } elsif ($now >= $first + $confirmdelay) {
+      delete $greylist{$fullkey};
+      $greylist{$domkey} = pack "LL", $first, $now;
+      result *CLIENT, "true";
+      next;
+    } else {
+      $greylist{$fullkey} = pack "LL", $first, $now;
+    }
+  } else {
+    $greylist{$fullkey} = pack "LL", $now, $now;
+  }
+
+  result *CLIENT, "false";
+}

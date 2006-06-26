@@ -1,0 +1,74 @@
+#!/bin/perl -w
+
+use Arachsys::A2 qw(ipusers checkipuser);
+use File::Basename;
+use Getopt::Std;
+use IO::Socket;
+use IO::Interface;
+use strict;
+
+sub usage() {
+  print STDERR <<EOF;
+Usage:  $0 [OPTIONS] [IP]...
+List information about ARACHSYS USER delegations for specified IP addresses,
+or all local addresses belonging to the current user if none are supplied.
+Options:
+  -A    list all IP addresses on this machine, not just those with
+        ARACHSYS USER delegations
+  -a    list all IP addresses on this machine with ARACHSYS USER
+        delegations, not just addresses belonging to the current user
+  -q    don't list IP addresses; instead return zero if all specified
+        IP addresses belong to the current user and non-zero otherwise
+  -r    list reverse DNS names in addition to IP addresses where these
+        are available
+EOF
+  exit 1;
+}
+
+sub HELP_MESSAGE { usage; }
+sub VERSION_MESSAGE { usage; }
+
+$0 = basename($0);
+my $privileged = $< == 0;
+my %option = ();
+usage unless getopts "Aaqr", \%option;
+
+$option{a} = 1 if $option{A};
+my @addresses;
+if (@ARGV > 0) {
+  usage if $option{a};
+  while (@ARGV > 0) {
+    my $ip = inet_aton (shift @ARGV);
+    usage unless $ip;
+    push @addresses, inet_ntoa($ip);
+  }
+  $option{A} = $option{a} = 1;
+} elsif (not $option{q}) {
+  my $socket = new IO::Socket::INET(Proto => 'udp');
+  foreach my $if ($socket->if_list) {
+    push @addresses, $socket->if_addr($if);
+  }
+  while (defined (my $uid = (getpwent)[3])) {
+    next unless $uid >= 1000 and $uid < 65534;
+    push @addresses, sprintf "127.1.%d.%d", $uid >> 8, $uid & 255;
+  }
+  @addresses = sort {
+    pack('C4', $a =~ /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/)
+    cmp
+    pack('C4', $b =~ /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/)
+  } @addresses;
+}
+
+my $status = 0;
+foreach my $ip (@addresses) {
+  if ($option{q}) {
+    $status++ unless $privileged or checkipuser($ip);
+  } else {
+    next unless $option{a} or $privileged or checkipuser($ip);
+    my @users = ipusers $ip;
+    my $name = $option{r} ? gethostbyaddr inet_aton($ip), AF_INET : undef;
+    next unless @users > 0 or $option{A};
+    print $ip, (defined $name ? "=$name" : ""), ": ", join(" ", @users), "\n";
+  }
+}
+exit $status;

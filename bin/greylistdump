@@ -1,0 +1,28 @@
+#!/bin/perl -w
+
+use DB_File;
+use File::Basename;
+use strict;
+
+my $greylist_db = "/var/lib/greylist.db";
+
+my %greylist;
+
+$0 = basename $0;
+$SIG{__DIE__} = sub { die "$0: $_[0]"; };
+$SIG{__WARN__} = sub { warn "$0: $_[0]"; };
+$SIG{INT} = $SIG{TERM} = sub { exit 1; };
+
+tie %greylist, "DB_File", $greylist_db, O_RDONLY, 0600, $DB_HASH
+  or die "$greylist_db: $!\n";
+
+foreach my $key (keys %greylist) {
+  my $record = $greylist{$key};
+  next unless defined $record;
+  my ($first, $last) = unpack "LL", $record;
+  if ($key =~ /\s.*\s/) {
+    print "G $key $first $last\n";
+  } else {
+    print "W $key $first $last\n";
+  }
+}

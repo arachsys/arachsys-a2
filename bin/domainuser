@@ -1,0 +1,36 @@
+#!/bin/perl -w
+
+use Arachsys::A2 qw(domainusers checkdomainuser);
+use File::Basename;
+use Getopt::Std;
+use strict;
+
+sub usage() {
+  print STDERR <<EOF;
+Usage:  $0 [OPTIONS] [DOMAIN]...
+List information about ARACHSYS USER delegations for specified domains.
+Options:
+  -q    don't list delegations; instead return zero if all specified
+        domains belong to the current user and non-zero otherwise
+EOF
+  exit 1;
+}
+
+sub HELP_MESSAGE { usage; }
+sub VERSION_MESSAGE { usage; }
+
+$0 = basename($0);
+my %option = ();
+usage unless getopts "q", \%option;
+usage unless @ARGV > 0;
+
+my $status = 0;
+foreach my $domain (@ARGV) {
+  if ($option{q}) {
+    $status++ unless checkdomainuser($domain);
+  } else {
+    my @users = domainusers $domain;
+    print "$domain: ", join(" ", @users), "\n";
+  }
+}
+exit $status;

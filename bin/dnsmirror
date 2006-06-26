@@ -1,0 +1,36 @@
+#!/bin/perl -w
+
+use File::Basename;
+use strict;
+
+my $datafile = $ENV{DATAFILE} || '/etc/tinydns/data';
+my $synctime = $ENV{SYNCTIME} || 60;
+
+my $updatecmd = 'cd ' . dirname($datafile) . ' && env ';
+$updatecmd .= "TTL_NS=$ENV{TTL_NS} "
+  if defined $ENV{TTL_NS} and $ENV{TTL_NS} =~ /^[0-9]+$/;
+$updatecmd .= "TTL_POSITIVE=$ENV{TTL_POSITIVE} "
+  if defined $ENV{TTL_POSITIVE} and $ENV{TTL_POSITIVE} =~ /^[0-9]+$/;
+$updatecmd .= "TTL_NEGATIVE=$ENV{TTL_NEGATIVE} "
+  if defined $ENV{TTL_NEGATIVE} and $ENV{TTL_NEGATIVE} =~ /^[0-9]+$/;
+$updatecmd .= $ENV{UPDATECMD} || "tinydns-data";
+
+my @slavehosts = @ARGV;
+exit 1 unless @slavehosts;
+
+my $lasttime = 0;
+while (1) {
+  my $filetime = (stat $datafile)[9];
+  if ($filetime != $lasttime) {
+    print STDERR "regenerating CDB file from data file\n";
+    system($updatecmd);
+    foreach my $slavehost (@slavehosts) {
+      print STDERR "mirroring $datafile to $slavehost\n";
+      system("rsync", "-aqz", $datafile, "$slavehost:$datafile");
+      print STDERR "regenerating CDB file on $slavehost\n";
+      system("ssh", $slavehost, $updatecmd);
+    }
+    $lasttime = $filetime;
+  }
+  sleep $synctime;
+}

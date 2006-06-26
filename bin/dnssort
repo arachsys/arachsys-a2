@@ -1,0 +1,51 @@
+#!/bin/perl -w
+
+use Fcntl qw(:DEFAULT :flock);
+use File::Basename;
+use strict;
+
+my $datafile = '/etc/tinydns/data';
+
+$0 = basename $0;
+umask 0077;
+
+$SIG{__DIE__} = sub { die "$0: $_[0]"; };
+$SIG{__WARN__} = sub { warn "$0: $_[0]"; };
+$SIG{PIPE} = $SIG{CHLD} = 'IGNORE';
+$SIG{INT} = $SIG{TERM} = sub { exit 1; };
+
+if (@ARGV == 1) {
+  $datafile = $ARGV[0];
+} elsif (@ARGV > 1) {
+  print STDERR <<EOF;
+Usage:  $0           sort DNS data in $datafile
+        $0 DATAFILE  sort DNS data in DATAFILE
+EOF
+  exit 1;
+}
+
+sysopen OLDDATA, $datafile, O_RDWR
+  or die "Unable to open '$datafile' for update: $!\n";
+flock OLDDATA, LOCK_EX|LOCK_NB or die "Unable to lock '$datafile': $!\n";
+$SIG{__DIE__} = sub { unlink "${datafile}.tmp"; die "$0: $_[0]"; };
+$SIG{INT} = $SIG{TERM} = sub { unlink "${datafile}.tmp"; exit 1; };
+sysopen NEWDATA, "${datafile}.tmp", O_WRONLY|O_CREAT
+  or die "Unable to create '${datafile}.tmp': $!\n";
+
+my @records;
+while (my $line = <OLDDATA>) {
+  chomp $line;
+  my $type = substr $line, 0, 1;
+  next if $type eq '' or $type eq '#';
+  my @field = split /:/, substr($line, 1);
+  if ($type =~ tr/.Z&'@NS=+\-^:C/\001-\015/) {
+    push @records, [join('.', reverse split /\./, lc $field[0])
+                    . $type . $line, $line];
+  } else {
+    push @records, ["\000$line", $line];
+  }
+}
+
+print NEWDATA map { "$_->[1]\n" } sort { $a->[0] cmp $b->[0] } @records;
+
+rename "${datafile}.tmp", $datafile;

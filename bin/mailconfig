@@ -1,0 +1,224 @@
+#!/bin/perl -w
+
+use Arachsys::A2 qw(checkuser checkdomain checkip checkdomainuser checkipuser);
+use CDB_File;
+use Fcntl qw(:DEFAULT :flock);
+use File::Basename;
+use Getopt::Std;
+use strict;
+
+my $directcdb = '/etc/exim/direct.cdb';
+my $passwdcdb = '/etc/exim/passwd.cdb';
+
+my $localpattern = qr/\*|[a-z0-9-=_][a-z0-9-=_.]*/i;
+my $domainatom = qr/(?i:[a-z0-9](?:[a-z0-9-]*[a-z0-9]|))/i;
+my $domainpattern = qr/$domainatom(?:\.$domainatom)*/;
+my $addresspattern = qr/$localpattern\@$domainatom(?:\.$domainatom)*/;
+my $userpattern = qr/[a-z0-9-=_][a-z0-9-=_.]*/;
+
+my $privileged = $< == 0;
+
+sub usage() {
+  print STDERR <<EOF;
+Usage:  $0 DOMAIN  operate on addresses for DOMAIN
+        $0 -a      operate on all of your addresses
+        $0 -p IP   operate on SMTP AUTH credentials for IP
+Options:
+  -r    read mode: list current records to STDOUT
+  -w    write mode: read replacement records from STDIN
+  -s    strict checking: abort immediately on input validation errors
+EOF
+  exit 1;
+}
+
+sub HELP_MESSAGE { usage; }
+sub VERSION_MESSAGE { usage; }
+
+$0 = basename $0;
+$( = $) = (getgrnam "mail")[2];
+umask 0027;
+
+my %option = ();
+getopts "aprws", \%option or usage;
+
+$SIG{__DIE__} = sub { die "$0: $_[0]"; };
+$SIG{__WARN__} = $option{s} ? sub { die $_[0] } : sub { warn "$0: $_[0]"; };
+$SIG{PIPE} = $SIG{CHLD} = 'IGNORE';
+$SIG{INT} = $SIG{TERM} = sub { exit 1; };
+
+my ($passwdip, $matchdomain, $cdbfile);
+
+my $readonly = $option{w} ? 0 : 1;
+my $silent = $option{r} ? 0 : 1;
+usage if $readonly and $silent;
+
+if ($option{p}) {
+  usage unless not $option{a} and @ARGV == 1;
+  unless ($passwdip = checkip $ARGV[0]) {
+    die "IP address $ARGV[0] is invalid\n";
+  }
+  unless ($privileged or checkipuser $passwdip) {
+    die "IP address $passwdip does not belong to you\n";
+  }
+  $cdbfile = $passwdcdb;
+} elsif (not $option{a} and @ARGV == 1) {
+  $matchdomain = $ARGV[0];
+  unless ($matchdomain = checkdomain $matchdomain) {
+    die "Domain $matchdomain is invalid\n";
+  }
+  unless ($privileged or checkdomainuser $matchdomain) {
+    die "Domain $matchdomain does not belong to you\n";
+  }
+  $cdbfile = $directcdb;
+} elsif ($option{a} and @ARGV == 0) {
+  $cdbfile = $directcdb;
+} else {
+  usage;
+}
+
+my (%oldcdb, $newcdb, $forkpid);
+
+if (-e $cdbfile) {
+  tie %oldcdb, 'CDB_File', $cdbfile or die "CDB_File tie failed: $!\n";
+} else {
+  %oldcdb = ();
+}
+
+unless ($readonly) {
+  sysopen LOCK, $cdbfile, O_RDWR|O_CREAT
+    or die "Unable to open '$cdbfile' for update: $!\n";
+  flock LOCK, LOCK_EX|LOCK_NB or die "Unable to lock '$cdbfile': $!\n";
+  $SIG{__DIE__} = sub { unlink "${cdbfile}.tmp"; die "$0: $_[0]"; };
+  $SIG{INT} = $SIG{TERM} = sub { unlink "${cdbfile}.tmp"; exit 1; };
+  $newcdb = new CDB_File $cdbfile, "${cdbfile}.tmp"
+    or die "CDB_File create failed: $!\n";
+  unless ($silent) {
+    $forkpid = fork;
+    die "Unable to fork: $!\n" unless defined $forkpid;
+  }
+}
+
+if ($readonly or not $silent and $forkpid == 0) {
+  close(STDIN);
+  while (my ($key, $data) = each %oldcdb) {
+    if (defined $passwdip) {
+      print "$1:$data\n" if $key =~ /^(.*)@([^@]+)$/ and $passwdip eq $2;
+    } else {
+      if ($key =~ /^(.*@([^@]+)):data$/
+          and (not defined $matchdomain or $matchdomain eq $2)
+          and ($privileged or checkuser $oldcdb{"$1:user"})) {
+        my ($address, $user) = ($1, $oldcdb{"$1:user"});
+        $data =~ s/^\n+//s; $data =~ s/\n+$//s; $data =~ s/^/ /gm;
+        $address =~ s/@[^@]+$// if defined $matchdomain;
+        if ($privileged) {
+          print "$address \[$user\]:$data\n";
+        } else {
+          print "$address:$data\n";
+        }
+      }
+    }
+  }
+  exit;
+}
+
+close(STDOUT);
+
+while (my ($key, $data) = each %oldcdb) {
+  if (defined $passwdip) {
+    next if $key =~ /^(.*)@([^@]+)$/ and $passwdip eq $2;
+  } else {
+    next if $key =~ /^(.*@([^@]+)):(data|user)$/
+            and (not defined $matchdomain or $matchdomain eq $2)
+            and ($privileged or checkuser $oldcdb{"$1:user"});
+  }
+  $newcdb->insert($key, $data);
+}
+
+my %seen = ();
+if (defined $passwdip) {
+  while (my $line = <STDIN>) {
+    if ($line =~ /^\s*($userpattern)\s*:\s*(\S+)\s*$/) {
+      if ($seen{$1}++) {
+        warn "Duplicate entry for username $1\n";
+      } else {
+        $newcdb->insert("$1\@$passwdip", $2);
+      }
+    } else {
+      warn "Invalid username/password combination '$line'\n";
+    }
+  }
+} else {
+  my $line = <STDIN>;
+  while (defined $line) {
+    my ($address, $data, $user);
+    chomp $line;
+
+    if ($line =~ /^($addresspattern)\s*\[($userpattern)\]\s*:\s*(.*)$/
+        and $privileged) {
+      ($address, $user, $data) = (lc $1, $2, $3);
+    } elsif ($line =~ /^($addresspattern)\s*:\s*(.*)$/) {
+      ($address, $user, $data) = (lc $1, undef, $2);
+    } elsif ($line =~ /^($localpattern)\s*\[($userpattern)\]\s*:\s*(.*)$/
+             and defined $matchdomain and $privileged) {
+      ($address, $user, $data) = (lc "$1\@$matchdomain", $2, $3);
+    } elsif ($line =~ /^($localpattern)\s*:\s*(.*)$/
+             and defined $matchdomain) {
+      ($address, $user, $data) = (lc "$1\@$matchdomain", undef, $2);
+    }
+
+    unless (defined $address and $address !~ /(\@|\.)in-addr\.arpa$/) {
+      warn "Invalid line '$line'\n" if $line =~ /\S/;
+      $line = <STDIN>;
+      next;
+    }
+    while ($line = <STDIN>, defined $line and $line =~ /^(\s|$)(.*)/) {
+      $data .= "\n$2";
+    }
+    $data =~ s/^\n+//s;
+    $data =~ s/\n+$//s;
+    if ($seen{$address}++) {
+      warn "Duplicate data for $address\n";
+      next;
+    }
+
+    my ($domain) = ($address =~ /([^@]*)$/);
+    if (defined $matchdomain and $matchdomain ne $domain) {
+      warn "$address is not in the specified domain $matchdomain\n";
+      next;
+    }
+
+    if ($privileged) {
+      if (not defined $user) {
+        if (exists $oldcdb{"$address:user"} and not $option{s}) {
+          $user = $oldcdb{"$address:user"};
+        }
+        if ($user) {
+          warn "[Using previous user $user for $address]\n";
+        } else {
+          warn "Missing user for $address\n";
+          next;
+        }
+      }
+    } else {
+      if (exists $oldcdb{"$address:user"}
+          and exists $oldcdb{"$address:data"}) {
+        $user = $oldcdb{"$address:user"};
+      } else {
+        $user = checkdomainuser $domain;
+      }
+      if (not $user and exists $oldcdb{"*\@$domain:user"}
+                    and exists $oldcdb{"*\@$domain:data"}) {
+        $user = $oldcdb{"*\@$domain:user"};
+      }
+      unless ($user and checkuser $user) {
+        warn "$address does not belong to you\n";
+        next;
+      }
+    }
+    $newcdb->insert("$address:user", $user);
+    $newcdb->insert("$address:data", $data);
+  }
+}
+
+$newcdb->finish or die "CDB_File finish failed: $!\n";
+exit 0

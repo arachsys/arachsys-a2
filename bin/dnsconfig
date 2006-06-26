@@ -1,0 +1,275 @@
+#!/bin/perl -w
+
+use Arachsys::A2 qw(checkdomain checkip checkdomainuser checkipuser);
+use Fcntl qw(:DEFAULT :flock);
+use File::Basename;
+use Getopt::Std;
+use strict;
+
+my $datafile = '/etc/tinydns/data';
+
+my $privileged = $< == 0;
+
+sub matchdomain($$) {
+  my ($match, $domain) = @_;
+  return 1 if not defined $match;
+  my $matchlength = length $match;
+  if ($matchlength >= length $domain) {
+    return $match eq $domain;
+  } else {
+    return ".$match" eq substr $domain, -(1 + $matchlength);
+  }
+}
+
+sub checku16($) {
+  my $n = shift;
+  return defined $n and $n =~ /^\d+$/ and $n >= 0 and $n <= 65535;
+}
+
+sub checku16opt($) {
+  my $n = shift;
+  if (defined $n and $n ne '') {
+    return $n =~ /^\d+$/ and $n >= 0 and $n <= 65535;
+  } else {
+    return 1;
+  }
+}
+
+sub checku32($) {
+  my $n = shift;
+  return defined $n and $n =~ /^\d+$/ and $n >= 0 and $n <= 4294967295;
+}
+
+sub checku32opt($) {
+  my $n = shift;
+  if (defined $n and $n ne '') {
+    return $n =~ /^\d+$/ and $n >= 0 and $n <= 4294967295;
+  } else {
+    return 1;
+  }
+}
+
+sub maxlength($$) {
+  my ($str, $len) = @_;
+  return defined $str ? length $str <= $len : 1;
+}
+
+sub usage() {
+  print STDERR <<EOF;
+Usage:  $0 DOMAIN  operate on DNS data below DOMAIN
+        $0 -a      operate on all DNS data (privileged user only)
+Options:
+  -r    read mode: list current records to STDOUT
+  -w    write mode: read replacement records from STDIN
+  -s    strict checking: abort immediately on input validation errors
+EOF
+  exit 1;
+}
+
+sub HELP_MESSAGE { usage; }
+sub VERSION_MESSAGE { usage; }
+
+$0 = basename $0;
+$( = $) = 0;
+umask 0077;
+
+my %option = ();
+getopts "arws", \%option or usage;
+
+$SIG{__DIE__} = sub { die "$0: $_[0]"; };
+$SIG{__WARN__} = $option{s} ? sub { die $_[0] } : sub { warn "$0: $_[0]"; };
+$SIG{PIPE} = $SIG{CHLD} = 'IGNORE';
+$SIG{INT} = $SIG{TERM} = sub { exit 1; };
+
+my $matchdomain;
+
+my $readonly = $option{w} ? 0 : 1;
+my $silent = $option{r} ? 0 : 1;
+usage if $readonly and $silent;
+
+if (not $option{a} and @ARGV == 1) {
+  $matchdomain = lc $ARGV[0];
+  unless (checkdomain $matchdomain) {
+    die "Domain $matchdomain is invalid\n";
+  }
+  unless ($privileged or checkdomainuser $matchdomain) {
+    die "Domain $matchdomain does not belong to you\n";
+  }
+} elsif (not $option{a} or @ARGV != 0) {
+  usage;
+} elsif (not $privileged) {
+  die "-a mode is only available to privileged users\n";
+}
+
+my $forkpid;
+
+unless ($readonly) {
+  sysopen LOCK, $datafile, O_RDWR|O_CREAT
+    or die "Unable to open '$datafile' for update: $!\n";
+  flock LOCK, LOCK_EX|LOCK_NB or die "Unable to lock '$datafile': $!\n";
+  $SIG{__DIE__} = sub { unlink "${datafile}.tmp"; die "$0: $_[0]"; };
+  $SIG{INT} = $SIG{TERM} = sub { unlink "${datafile}.tmp"; exit 1; };
+  sysopen NEWDATA, "${datafile}.tmp", O_WRONLY|O_CREAT
+    or die "Unable to create '${datafile}.tmp': $!\n";
+  unless ($silent) {
+    $forkpid = fork;
+    die "Unable to fork: $!\n" unless defined $forkpid;
+  }
+}
+
+sysopen OLDDATA, $datafile, O_RDONLY
+  or die "Unable to open '$datafile' for reading: $!\n";
+
+if ($readonly or not $silent and $forkpid == 0) {
+  close(STDIN);
+  while (my $line = <OLDDATA>) {
+    chomp $line;
+    my $type = substr $line, 0, 1;
+    next if $type eq '' or $type eq '#';
+    next if $type eq '%' and defined $matchdomain;
+    my @field = split /:/, substr($line, 1);
+    print "$line\n" if matchdomain $matchdomain, $field[0];
+  }
+  exit;
+}
+
+close(STDOUT);
+
+if (defined $matchdomain) {
+  while (my $line = <OLDDATA>) {
+    chomp $line;
+    my $type = substr $line, 0, 1;
+    next if $type eq '' or $type eq '#';
+    my @field = split /:/, substr($line, 1);
+    next if $type ne '%' and matchdomain $matchdomain, $field[0];
+    print NEWDATA "$line\n";
+  }
+}
+
+while (my $line = <STDIN>) {
+  chomp $line;
+  my $type = substr $line, 0, 1;
+  next if $type eq '' or $type eq '#';
+  my @field = split /:/, substr($line, 1);
+
+  if ($type eq '%') {
+    if ($matchdomain) {
+      warn "Location definition '$line' is not permitted\n";
+      next;
+    }
+    if ($field[0] !~ /[0-9a-z]{1,2}/) {
+      warn "Invalid location definition '$line'\n";
+      next;
+    }
+  } elsif ($type =~ /[.Z&'\@NS=+\-^:C]/) {
+    unless (defined $field[0]) {
+      warn "Invalid $type record '$line'\n";
+      next;
+    }
+    unless (matchdomain $matchdomain, $field[0]) {
+      warn "$field[0] is outside $matchdomain in '$line'\n";
+      next;
+    }
+
+    if ($type =~ /[.&\@S=+\-]/ and defined $field[1] and $field[1] ne '') {
+      if (my $ip = checkip $field[1]) {
+        $field[1] = $ip;
+        $line =~ s/(.[^:]+:)[^:]+/$1$ip/;
+      } else {
+        warn "Invalid or unknown address in '$line'\n";
+        next;
+      }
+    } elsif ($type =~ /[=+-]/) {
+      warn "Invalid $type record '$line'\n";
+      next;
+    } elsif ($type =~ /[C^]/ and not checkdomain $field[1]) {
+      warn "Invalid destination in '$line'\n";
+      next;
+    }
+
+    if ($type eq '=' and not ($privileged or checkipuser $field[1])) {
+      warn "$field[1] does not belong to you in '$line'\n";
+      next;
+    } elsif ($type =~ /[.&\@S]/) {
+      if (not defined $field[2]) {
+        warn "Invalid $type record '$line'\n";
+        next;
+      } elsif ($field[2] =~ /\./ and $field[1] ne ''
+               and not ($privileged or checkdomainuser $field[2])) {
+        warn "$field[2] does not belong to you in '$line'\n";
+        next;
+      }
+    }
+
+    my ($ttl, $stamp, $loc);
+    if ($type eq ':') {
+      unless (checku16 $field[1] and $field[1] != 2 and $field[1] != 5
+              and $field[1] != 6 and $field[1] != 12 and $field[1] != 15
+              and $field[1] != 252) {
+        warn "Invalid generic record '$line'\n";
+        next;
+      }
+      ($ttl, $stamp, $loc) = @field[3..5];
+    } elsif ($type =~ /[&.]/) {
+      unless (checkdomain $field[2]) {
+        warn "Invalid $type record '$line'\n";
+        next;
+      }
+      ($ttl, $stamp, $loc) = @field[3..5];
+    } elsif ($type eq 'Z') {
+      unless (checkdomain $field[1] and checkdomain $field[2]
+              and checku32opt $field[3] and checku32opt $field[4]
+              and checku32opt $field[5] and checku32opt $field[6]
+              and checku32opt $field[7]) {
+        warn "Invalid Z record '$line'\n";
+        next;
+      }
+      ($ttl, $stamp, $loc) = @field[8..10];
+    } elsif ($type eq '@') {
+      unless (checkdomain $field[2] and checku16opt $field[3]) {
+        warn "Invalid \@ record '$line'\n";
+        next;
+      }
+      ($ttl, $stamp, $loc) = @field[4..6];
+    } elsif ($type eq 'N') {
+      unless (checku16opt $field[1] and checku16opt $field[2]
+              and maxlength $field[3], 255 and maxlength $field[4], 255
+              and maxlength $field[5], 255
+              and (not $field[6] or checkdomain $field[6])) {
+        warn "Invalid N record '$line'\n";
+        next;
+      }
+      ($ttl, $stamp, $loc) = @field[7..9];
+    } elsif ($type eq 'S') {
+      unless (checkdomain $field[2] and checku16 $field[3]
+              and checku16opt $field[4] and checku16opt $field[5]) {
+        warn "Invalid S record '$line'\n";
+        next;
+      }
+      ($ttl, $stamp, $loc) = @field[6..8];
+    } elsif ($type eq q/'/) {
+      ($ttl, $stamp, $loc) = @field[3..5];
+    } else {
+      ($ttl, $stamp, $loc) = @field[2..4];
+    }
+
+    unless (checku32opt $ttl) {
+      warn "Invalid time to live $ttl in '$line'\n";
+      next;
+    }
+    if ($stamp and $stamp !~ /^[0-9a-f]{16}$/) {
+      warn "Invalid time stamp $stamp in '$line'\n";
+      next;
+    }
+    if ($loc and $loc !~ /[0-9a-z]{1,2}/) {
+      warn "Invalid client location $loc in '$line'\n";
+      next;
+    }
+  } else {
+    warn "Unknown record type '$type' in '$line'\n";
+    next;
+  }
+  print NEWDATA "$line\n";
+}
+
+rename "${datafile}.tmp", $datafile;

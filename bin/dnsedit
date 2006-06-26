@@ -1,0 +1,71 @@
+#!/bin/perl -w
+
+use Arachsys::A2 qw(checkdomain checkdomainuser);
+use File::Temp;
+use File::Basename;
+use Getopt::Std;
+use Term::ReadKey;
+use strict;
+
+my $editor = $ENV{VISUAL} || $ENV{EDITOR} || "vi";
+my $privileged = $< == 0;
+
+sub confirm() {
+  ReadMode 'cbreak';
+  my $key = ReadKey(0);
+  ReadMode 'normal';
+  return lc $key eq 'y' ? 1 : 0;
+}
+
+sub usage() {
+  print STDERR <<EOF;
+Usage:  $0 DOMAIN  edit DNS data below DOMAIN
+        $0 -a      edit all DNS data (privileged user only)
+EOF
+  exit 1;
+}
+
+sub HELP_MESSAGE { usage; }
+sub VERSION_MESSAGE { usage; }
+
+$SIG{__DIE__} = sub { die "$0: $_[0]"; };
+$SIG{__WARN__} = sub { warn "$0: $_[0]"; };
+$SIG{INT} = $SIG{TERM} = sub { exit 1; };
+
+$0 = basename $0;
+umask 0077;
+
+my %option = ();
+getopts "a", \%option or usage;
+
+my $matchdomain;
+if (not $option{a} and @ARGV == 1) {
+  $matchdomain = lc $ARGV[0];
+  unless (checkdomain $matchdomain) {
+    die "Domain $matchdomain is invalid\n";
+  }
+  unless ($privileged or checkdomainuser $matchdomain) {
+    die "Domain $matchdomain does not belong to you\n";
+  }
+} elsif (not $option{a} or @ARGV != 0) {
+  usage;
+} elsif (not $privileged) {
+  die "-a mode is only available to privileged users\n";
+} else {
+  $matchdomain = "-a";
+}
+
+my $tempfile = new File::Temp;
+system "/bin/dnsconfig -r $matchdomain >$tempfile";
+die "Failed to read DNS records for editing\n" unless $? == 0;
+while (1) {
+  system $editor, $tempfile;
+  die "Failed to edit DNS records\n" unless $? == 0;
+  system "/bin/dnsconfig -ws $matchdomain <$tempfile";
+  if ($? == 0) {
+    print STDERR "DNS records successfully updated\n";
+    exit;
+  }
+  warn "Failed to update DNS records. Return to editor? (y/n)\n";
+  exit unless confirm;
+}
