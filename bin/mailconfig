@@ -14,7 +14,8 @@ my $localpattern = qr/\*|[a-z0-9-=_][a-z0-9-=_.]*/i;
 my $domainatom = qr/(?i:[a-z0-9](?:[a-z0-9-]*[a-z0-9]|))/i;
 my $domainpattern = qr/$domainatom(?:\.$domainatom)*/;
 my $addresspattern = qr/$localpattern\@$domainatom(?:\.$domainatom)*/;
-my $userpattern = qr/[a-z0-9-=_][a-z0-9-=_.]*/;
+my $loginpattern = qr/[a-z0-9-=_][a-z0-9-=_.]*/;
+my $userpattern = qr/[a-z0-9-=_@][a-z0-9-=_.@]*/;
 
 my $privileged = $< == 0;
 
@@ -153,12 +154,12 @@ if (defined $passwdip) {
     my ($address, $data, $user);
     chomp $line;
 
-    if ($line =~ /^($addresspattern)\s*\[($userpattern)\]\s*:\s*(.*)$/
+    if ($line =~ /^($addresspattern)\s*\[($loginpattern)\]\s*:\s*(.*)$/
         and $privileged) {
       ($address, $user, $data) = (lc $1, $2, $3);
     } elsif ($line =~ /^($addresspattern)\s*:\s*(.*)$/) {
       ($address, $user, $data) = (lc $1, undef, $2);
-    } elsif ($line =~ /^($localpattern)\s*\[($userpattern)\]\s*:\s*(.*)$/
+    } elsif ($line =~ /^($localpattern)\s*\[($loginpattern)\]\s*:\s*(.*)$/
              and defined $matchdomain and $privileged) {
       ($address, $user, $data) = (lc "$1\@$matchdomain", $2, $3);
     } elsif ($line =~ /^($localpattern)\s*:\s*(.*)$/
