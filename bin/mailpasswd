@@ -18,13 +18,15 @@ mailconfig -pr -- "$HOSTADDR" >"$TMPFILE" || exit 1
 
 if ! pcregrep "^\Q$USERNAME\E(:|$)" "$TMPFILE" >/dev/null; then
   cat <<EOF >&2
-mailuseradd: mail user $USERNAME does not exist for this IP
+mailpasswd: mail user $USERNAME does not exist for this IP
 EOF
   exit 1
 fi
 
 PASSWORD=`dovecotpw -s PLAIN` || exit 1
 PASSWORD=`echo "$PASSWORD" | sed 's/^{[^}]*}//'` || exit 1
-perl -pi -e "s/^\Q$USERNAME\E(:.*|)\$/$USERNAME:$PASSWORD/;" "$TMPFILE"
-mailconfig -pws -- "$HOSTADDR" <"$TMPFILE" || exit 1
+
+( pcregrep -v "^\Q$USERNAME\E(:|$)" <"$TMPFILE"
+  echo "$USERNAME:$PASSWORD" ) | mailconfig -pws -- "$HOSTADDR" || exit 1
+
 echo "Mail configuration successfully updated" >&2
