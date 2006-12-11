@@ -127,6 +127,13 @@ sub checkdomainuser($) {
   return "" unless defined $domain;
   unless (exists $checkeddomains{$domain}) {
     $checkeddomains{$domain} = "";
+    my $staff = getgrnam "staff";
+    foreach my $group (split ' ', $() {
+      if ($group == $staff) {
+        $checkeddomains{$domain} = getpwuid $<;
+        return $checkeddomains{$domain};
+      }
+    }
     foreach my $username (domainusers $domain) {
       if (checkuser $username) {
         $checkeddomains{$domain} = $username;
@@ -140,8 +147,8 @@ sub checkdomainuser($) {
 sub checkipuser($) {
   my $ip = checkip(shift);
   return () unless defined $ip and $ip =~ /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/;
-  if ($1 == 127 and $2 == 1 and $< == 256*$3 + $4) {
-    return scalar getpwuid $<;
+  if ($1 == 127 and $2 == 1) {
+    return $< == 256*$3 + $4 ? scalar getpwuid $< : "";
   }
   return checkdomainuser "$4.$3.$2.$1.in-addr.arpa";
 }

@@ -16,9 +16,8 @@ $updatecmd .= "TTL_NEGATIVE=$ENV{TTL_NEGATIVE} "
 $updatecmd .= $ENV{UPDATECMD} || "tinydns-data";
 
 my @slavehosts = @ARGV;
-exit 1 unless @slavehosts;
-
 my $lasttime = 0;
+
 while (1) {
   my $filetime = (stat $datafile)[9];
   if ($filetime != $lasttime) {
