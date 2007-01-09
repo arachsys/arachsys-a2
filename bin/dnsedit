@@ -1,9 +1,12 @@
 #!/bin/perl -w
 
 use Arachsys::A2 qw(checkdomain checkdomainuser);
-use File::Temp;
 use File::Basename;
+use File::Compare;
+use File::Copy;
+use File::Temp;
 use Getopt::Std;
+use IPC::Open2;
 use Term::ReadKey;
 use strict;
 
@@ -14,6 +17,7 @@ sub confirm() {
   ReadMode 'cbreak';
   my $key = ReadKey(0);
   ReadMode 'normal';
+  print STDERR "$key\n";
   return lc $key eq 'y' ? 1 : 0;
 }
 
@@ -55,17 +59,43 @@ if (not $option{a} and @ARGV == 1) {
   $matchdomain = "-a";
 }
 
-my $tempfile = new File::Temp;
-system "/bin/dnsconfig -r $matchdomain >$tempfile";
+my $editfile = new File::Temp;
+my $origfile = new File::Temp;
+
+system "/bin/dnsconfig -r $matchdomain >$origfile";
 die "Failed to read DNS records for editing\n" unless $? == 0;
+copy $origfile->filename, $editfile->filename
+  or die "Failed to create file for editing\n";
+
 while (1) {
-  system $editor, $tempfile;
+  system $editor, $editfile;
   die "Failed to edit DNS records\n" unless $? == 0;
-  system "/bin/dnsconfig -ws $matchdomain <$tempfile";
+
+  my $checkfile = new File::Temp;
+  my $pid = open2 \*OUT, \*IN, "/bin/dnsconfig -rws $matchdomain";
+  copy \*OUT, $checkfile->filename;
+  close \*OUT;
+
+  if (compare $origfile->filename, $checkfile->filename) {
+    copy $checkfile->filename, \*IN;
+    close \*IN;
+    waitpid $pid, 0;
+    warn "DNS records have changed while you were editing\n";
+    print STDERR "Save anyway? (y/n) ";
+    exit 1 unless confirm;
+    system "/bin/dnsconfig -ws $matchdomain <$editfile";
+  } else {
+    copy $editfile->filename, \*IN;
+    close \*IN;
+    waitpid $pid, 0;
+  }
+
   if ($? == 0) {
-    print STDERR "DNS records successfully updated\n";
+    warn "DNS records successfully updated\n";
     exit;
   }
-  warn "Failed to update DNS records. Return to editor? (y/n)\n";
-  exit unless confirm;
+
+  warn "Failed to update DNS records\n";
+  print STDERR "Return to editor? (y/n) ";
+  exit 1 unless confirm;
 }
