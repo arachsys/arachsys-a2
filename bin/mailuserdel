@@ -18,7 +18,7 @@ mailconfig -pr -- "$HOSTADDR" >"$TMPFILE" || exit 1
 
 if ! pcregrep "^\Q$USERNAME\E(:|$)" "$TMPFILE" >/dev/null; then
   cat <<EOF >&2
-mailuserdel: mail user $USERNAME does not exist for this IP 
+mailuserdel: mail user $USERNAME does not exist for this IP
 EOF
   exit 1
 fi

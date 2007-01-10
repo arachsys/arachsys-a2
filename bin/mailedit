@@ -3,7 +3,7 @@
 use Arachsys::A2 qw(checkdomain checkip checkdomainuser checkipuser);
 use File::Basename;
 use File::Compare;
-use File::Copy; 
+use File::Copy;
 use File::Temp;
 use Getopt::Std;
 use IPC::Open2;
