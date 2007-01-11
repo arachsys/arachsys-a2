@@ -1,35 +1,71 @@
 #!/bin/perl -w
 
 use File::Basename;
+use File::Copy;
+use File::Temp qw(tempfile);
 use strict;
 
-my $datafile = $ENV{DATAFILE} || '/etc/tinydns/data';
-my $synctime = $ENV{SYNCTIME} || 60;
+$ENV{ROOT} ||= '/etc/tinydns';
+$ENV{CHECK} ||= 60;
+$ENV{TTL_NS} ||= 10800;
+$ENV{TTL_POSITIVE} ||= 3600;
+$ENV{TTL_NEGATIVE} ||= 120;
 
-my $updatecmd = 'cd ' . dirname($datafile) . ' && env ';
-$updatecmd .= "TTL_NS=$ENV{TTL_NS} "
-  if defined $ENV{TTL_NS} and $ENV{TTL_NS} =~ /^[0-9]+$/;
-$updatecmd .= "TTL_POSITIVE=$ENV{TTL_POSITIVE} "
-  if defined $ENV{TTL_POSITIVE} and $ENV{TTL_POSITIVE} =~ /^[0-9]+$/;
-$updatecmd .= "TTL_NEGATIVE=$ENV{TTL_NEGATIVE} "
-  if defined $ENV{TTL_NEGATIVE} and $ENV{TTL_NEGATIVE} =~ /^[0-9]+$/;
-$updatecmd .= $ENV{UPDATECMD} || "tinydns-data";
+my $hostname = `hostname -s`;
+chomp $hostname;
 
-my @slavehosts = @ARGV;
-my $lasttime = 0;
+my $localdata = 'data.local';
+my $remotedata = "$ENV{ROOT}/data.$hostname";
+my $cdbfile = "$ENV{ROOT}/data.cdb";
+
+my (@peerhosts, @slavehosts);
+
+foreach (@ARGV) {
+  if (/^slave:(.*)$/) {
+    push @slavehosts, $1;
+  } elsif (/^peer:(.*)$/) {
+    push @peerhosts, $1;
+  } else {
+    push @peerhosts, $_;
+  }
+}
+
+my $updatetime = 0;
+
+die "unable to change to directory $ENV{ROOT}\n" unless chdir $ENV{ROOT};
 
 while (1) {
-  my $filetime = (stat $datafile)[9];
-  if ($filetime != $lasttime) {
-    print STDERR "regenerating CDB file from data file\n";
-    system($updatecmd);
-    foreach my $slavehost (@slavehosts) {
-      print STDERR "mirroring $datafile to $slavehost\n";
-      system("rsync", "-aqz", $datafile, "$slavehost:$datafile");
-      print STDERR "regenerating CDB file on $slavehost\n";
-      system("ssh", $slavehost, $updatecmd);
+  my $maxmtime = 0;
+  opendir DIR, '.';
+  while (defined (my $file = readdir DIR)) {
+    next unless $file =~ /^data\./ and $file !~ /\.(cdb|tmp)$/;
+    my $mtime = (stat $file)[9];
+    if ($file eq $localdata and $mtime > $updatetime) {
+      foreach my $peerhost (@peerhosts) {
+        print STDERR "mirroring $localdata to $peerhost:$remotedata\n";
+        system "rsync", "-qz", $localdata, "$peerhost:$remotedata";
+      }
     }
-    $lasttime = $filetime;
+    $maxmtime = $mtime if $mtime > $maxmtime;
   }
-  sleep $synctime;
+
+  if ($maxmtime > $updatetime) {
+    print STDERR "regenerating CDB file from data files\n";
+    opendir DIR, '.';
+    my ($data, $tmpname) = tempfile 'tmp.XXXXXX';
+    while (defined (my $file = readdir DIR)) {
+      next unless $file =~ /^data\./ and $file !~ /\.(cdb|tmp)$/;
+      copy $file, $data;
+    }
+    closedir DIR;
+    rename $tmpname, 'data';
+    system 'tinydns-data';
+    foreach my $slavehost (@slavehosts) {
+      print STDERR "mirroring CDB file to $slavehost:$cdbfile\n";
+      system "rsync", "-qz", $cdbfile, "$slavehost:$cdbfile";
+    }
+    $updatetime = $maxmtime;
+  }
+
+  sleep $ENV{CHECK};
 }

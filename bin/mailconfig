@@ -22,7 +22,7 @@ my $privileged = $< == 0;
 sub usage() {
   print STDERR <<EOF;
 Usage:  $0 DOMAIN  operate on addresses for DOMAIN
-        $0 -a      operate on all of your addresses
+        $0 -a      operate on all addresses (privileged user only)
         $0 -p IP   operate on SMTP AUTH credentials for IP
 Options:
   -r    read mode: list current records to STDOUT
@@ -43,7 +43,7 @@ my %option = ();
 getopts "aprws", \%option or usage;
 
 $SIG{__DIE__} = sub { die "$0: $_[0]"; };
-$SIG{__WARN__} = $option{s} ? sub { die $_[0] } : sub { warn "$0: $_[0]"; };
+$SIG{__WARN__} = sub { warn "$0: $_[0]" ; };
 $SIG{PIPE} = $SIG{CHLD} = 'IGNORE';
 $SIG{INT} = $SIG{TERM} = sub { exit 1; };
 
@@ -71,8 +71,10 @@ if ($option{p}) {
     die "Domain $matchdomain does not belong to you\n";
   }
   $cdbfile = $directcdb;
-} elsif ($option{a} and @ARGV == 0) {
+} elsif ($option{a} and @ARGV == 0 and $privileged) {
   $cdbfile = $directcdb;
+} elsif ($option{a} and @ARGV == 0) {
+  die "-a mode is only available to privileged users\n";
 } else {
   usage;
 }
@@ -106,15 +108,15 @@ if ($readonly or not $silent and $forkpid == 0) {
       print "$1:$data\n" if $key =~ /^(.*)@([^@]+)$/ and $passwdip eq $2;
     } else {
       if ($key =~ /^(.*@([^@]+)):data$/
-          and (not defined $matchdomain or $matchdomain eq $2)
-          and ($privileged or checkuser $oldcdb{"$1:user"})) {
+          and (not defined $matchdomain or $matchdomain eq $2)) {
         my ($address, $user) = ($1, $oldcdb{"$1:user"});
         $data =~ s/^\n+//s; $data =~ s/\n+$//s; $data =~ s/^/ /gm;
-        $address =~ s/@[^@]+$// if defined $matchdomain;
-        if ($privileged) {
-          print "$address \[$user\]:$data\n";
-        } else {
+        if (checkuser($oldcdb{"$address:user"}) and not $privileged) {
+          $address =~ s/@[^@]+$// if defined $matchdomain;
           print "$address:$data\n";
+        } else {
+          $address =~ s/@[^@]+$// if defined $matchdomain;
+          print "$address \[$user\]:$data\n";
         }
       }
     }
@@ -129,11 +131,14 @@ while (my ($key, $data) = each %oldcdb) {
     next if $key =~ /^(.*)@([^@]+)$/ and $passwdip eq $2;
   } else {
     next if $key =~ /^(.*@([^@]+)):(data|user)$/
-            and (not defined $matchdomain or $matchdomain eq $2)
-            and ($privileged or checkuser $oldcdb{"$1:user"});
+            and (not defined $matchdomain or $matchdomain eq $2);
   }
   $newcdb->insert($key, $data);
 }
+
+my $errors = 0;
+$SIG{__WARN__} = $option{s} ? sub { die $_[0] }
+                            : sub { warn "$0: $_[0]"; $errors++ };
 
 my %seen = ();
 if (defined $passwdip) {
@@ -154,13 +159,12 @@ if (defined $passwdip) {
     my ($address, $data, $user);
     chomp $line;
 
-    if ($line =~ /^($addresspattern)\s*\[($loginpattern)\]\s*:\s*(.*)$/
-        and $privileged) {
+    if ($line =~ /^($addresspattern)\s*\[($loginpattern)\]\s*:\s*(.*)$/) {
       ($address, $user, $data) = (lc $1, $2, $3);
     } elsif ($line =~ /^($addresspattern)\s*:\s*(.*)$/) {
       ($address, $user, $data) = (lc $1, undef, $2);
     } elsif ($line =~ /^($localpattern)\s*\[($loginpattern)\]\s*:\s*(.*)$/
-             and defined $matchdomain and $privileged) {
+             and defined $matchdomain) {
       ($address, $user, $data) = (lc "$1\@$matchdomain", $2, $3);
     } elsif ($line =~ /^($localpattern)\s*:\s*(.*)$/
              and defined $matchdomain) {
@@ -190,29 +194,32 @@ if (defined $passwdip) {
 
     if ($privileged) {
       if (not defined $user) {
-        if (exists $oldcdb{"$address:user"} and not $option{s}) {
+        if (exists $oldcdb{"$address:user"}) {
           $user = $oldcdb{"$address:user"};
-        }
-        if ($user) {
-          warn "[Using previous user $user for $address]\n";
+          print STDERR "$0: Using previous user $user for $address\n";
         } else {
           warn "Missing user for $address\n";
           next;
         }
       }
     } else {
-      if (exists $oldcdb{"$address:user"}
-          and exists $oldcdb{"$address:data"}) {
-        $user = $oldcdb{"$address:user"};
-      } else {
-        $user = checkdomainuser $domain;
+      if (not defined $user) {
+        if (exists $oldcdb{"$address:user"}
+            and checkuser $oldcdb{"$address:user"}) {
+          $user = $oldcdb{"$address:user"};
+        } else {
+          $user = checkdomainuser $domain;
+        }
       }
-      if (not $user and exists $oldcdb{"*\@$domain:user"}
-                    and exists $oldcdb{"*\@$domain:data"}) {
-        $user = $oldcdb{"*\@$domain:user"};
+      unless ($user) {
+        warn "Domain $domain does not belong to you\n";
+        next;
       }
-      unless ($user and checkuser $user) {
-        warn "$address does not belong to you\n";
+      unless (checkuser $user or (exists $oldcdb{"$address:user"}
+                                  and exists $oldcdb{"$address:data"}
+                                  and $user eq $oldcdb{"$address:user"}
+                                  and $data eq $oldcdb{"$address:data"})) {
+        warn "You cannot modify addresses on behalf of another user\n";
         next;
       }
     }
@@ -221,5 +228,6 @@ if (defined $passwdip) {
   }
 }
 
+die "Errors in configuration\n" if $errors > 0;
 $newcdb->finish or die "CDB_File finish failed: $!\n";
 exit 0

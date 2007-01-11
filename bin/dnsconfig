@@ -6,7 +6,7 @@ use File::Basename;
 use Getopt::Std;
 use strict;
 
-my $datafile = '/etc/tinydns/data';
+my $datafile = '/etc/tinydns/data.local';
 
 my $privileged = $< == 0;
 
@@ -77,7 +77,7 @@ my %option = ();
 getopts "arws", \%option or usage;
 
 $SIG{__DIE__} = sub { die "$0: $_[0]"; };
-$SIG{__WARN__} = $option{s} ? sub { die $_[0] } : sub { warn "$0: $_[0]"; };
+$SIG{__WARN__} = sub { warn "$0: $_[0]" ; };
 $SIG{PIPE} = $SIG{CHLD} = 'IGNORE';
 $SIG{INT} = $SIG{TERM} = sub { exit 1; };
 
@@ -102,7 +102,6 @@ if (not $option{a} and @ARGV == 1) {
 }
 
 my $forkpid;
-
 unless ($readonly) {
   sysopen LOCK, $datafile, O_RDWR|O_CREAT
     or die "Unable to open '$datafile' for update: $!\n";
@@ -145,6 +144,10 @@ if (defined $matchdomain) {
     print NEWDATA "$line\n";
   }
 }
+
+my $errors = 0;
+$SIG{__WARN__} = $option{s} ? sub { die $_[0] }
+                            : sub { warn "$0: $_[0]"; $errors++ };
 
 while (my $line = <STDIN>) {
   chomp $line;
@@ -272,4 +275,5 @@ while (my $line = <STDIN>) {
   print NEWDATA "$line\n";
 }
 
+die "Invalid records in input\n" if $errors > 0;
 rename "${datafile}.tmp", $datafile;

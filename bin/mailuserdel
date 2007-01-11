@@ -1,29 +1,38 @@
-#!/bin/sh
+#!/bin/perl -w
 
-if [ $# -ne 2 ]; then
-  cat <<EOF >&2
-Usage: mailuserdel IP USERNAME
-EOF
-  exit 1
-fi
+use Arachsys::A2 qw(checkip checkipuser);
+use File::Basename;
+use IPC::Open2;
+use strict;
 
-TMPDIR=${TMPDIR:-/tmp}
-TMPFILE=`mktemp "$TMPDIR/mailuserdel.XXXXXX"` || exit 1
-trap "rm -f -- \"$TMPFILE\"" 0 1 2 15
+my $userpattern = qr/[a-z0-9-=_@][a-z0-9-=_.@]*/;
+my $privileged = $< == 0;
 
-HOSTADDR=$1
-USERNAME=$2
+sub usage() {
+  print STDERR "Usage: $0 IP USERNAME\n";
+  exit 1;
+}
 
-mailconfig -pr -- "$HOSTADDR" >"$TMPFILE" || exit 1
+$SIG{__DIE__} = sub { die "$0: $_[0]"; };
+$SIG{__WARN__} = sub { warn "$0: $_[0]"; };
+$SIG{INT} = $SIG{TERM} = sub { exit 1; };
 
-if ! pcregrep "^\Q$USERNAME\E(:|$)" "$TMPFILE" >/dev/null; then
-  cat <<EOF >&2
-mailuserdel: mail user $USERNAME does not exist for this IP
-EOF
-  exit 1
-fi
+$0 = basename $0;
+usage unless @ARGV == 2;
 
-pcregrep -v "^\Q$USERNAME\E(:|$)" <"$TMPFILE" \
-  | mailconfig -pws -- "$HOSTADDR" || exit 1
+my $passwdip;
+die "IP address $ARGV[0] is invalid\n"
+  unless $passwdip = checkip $ARGV[0];
+die "IP address $passwdip does not belong to you\n"
+  unless $privileged or checkipuser $passwdip;
 
-echo "Mail configuration successfully updated" >&2
+my $username = $ARGV[1];
+die "Invalid username '$username'\n"
+  unless $username =~ /^$userpattern$/;
+
+my $pid = open2 \*OUT, \*IN, "/bin/mailconfig -rwp $passwdip";
+while (<OUT>) {
+  print IN $_ unless (split /[:\n]/)[0] eq $username;
+}
+close OUT;
+close IN;

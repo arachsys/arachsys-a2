@@ -24,7 +24,7 @@ sub confirm() {
 sub usage() {
   print STDERR <<EOF;
 Usage:  $0 DOMAIN  edit addresses for DOMAIN
-        $0 -a      edit all of your addresses
+        $0 -a      edit all addresses (privileged user only)
         $0 -p IP   edit SMTP AUTH credentials for IP
 EOF
   exit 1;
@@ -62,8 +62,10 @@ if ($option{p}) {
   unless ($privileged or checkdomainuser $matchdomain) {
     die "Domain $matchdomain does not belong to you\n";
   }
-} elsif ($option{a} and @ARGV == 0) {
+} elsif ($option{a} and @ARGV == 0 and $privileged) {
   $matchdomain = "-a";
+} elsif ($option{a} and @ARGV == 0) {
+  die "-a mode is only available to privileged users\n";
 } else {
   usage;
 }

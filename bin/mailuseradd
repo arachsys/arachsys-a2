@@ -1,30 +1,40 @@
-#!/bin/sh
+#!/bin/perl -w
 
-if [ $# -ne 2 ]; then
-  cat <<EOF >&2
-Usage: mailuseradd IP USERNAME
-EOF
-  exit 1
-fi
+use Arachsys::A2 qw(checkip checkipuser);
+use File::Basename;
+use IPC::Open2;
+use strict;
 
-TMPDIR=${TMPDIR:-/tmp}
-TMPFILE=`mktemp "$TMPDIR/mailuseradd.XXXXXX"` || exit 1
-trap "rm -f -- \"$TMPFILE\"" 0 1 2 15
+my $userpattern = qr/[a-z0-9-=_@][a-z0-9-=_.@]*/;
+my $privileged = $< == 0;
 
-HOSTADDR=$1
-USERNAME=$2
+sub usage() {
+  print STDERR "Usage: $0 IP USERNAME\n";
+  exit 1;
+}
 
-mailconfig -pr -- "$HOSTADDR" >"$TMPFILE" || exit 1
+$SIG{__DIE__} = sub { die "$0: $_[0]"; };
+$SIG{__WARN__} = sub { warn "$0: $_[0]"; };
+$SIG{INT} = $SIG{TERM} = sub { exit 1; };
 
-if pcregrep "^\Q$USERNAME\E(:|$)" "$TMPFILE" >/dev/null; then
-  cat <<EOF >&2
-mailuseradd: mail user $USERNAME already exists for this IP
-EOF
-  exit 1
-fi
+$0 = basename $0;
+usage unless @ARGV == 2;
 
-PASSWORD=`dovecotpw -s PLAIN` || exit 1
-PASSWORD=`echo "$PASSWORD" | sed 's/^{[^}]*}//'` || exit 1
-echo "$USERNAME:$PASSWORD" >>"$TMPFILE"
-mailconfig -pws -- "$HOSTADDR" <"$TMPFILE" || exit 1
-echo "Mail configuration successfully updated" >&2
+my $passwdip;
+die "IP address $ARGV[0] is invalid\n"
+  unless $passwdip = checkip $ARGV[0];
+die "IP address $passwdip does not belong to you\n"
+  unless $privileged or checkipuser $passwdip;
+
+my $username = $ARGV[1];
+die "Invalid username '$username'\n"
+  unless $username =~ /^$userpattern$/;
+
+my $password = `dovecotpw -s PLAIN` or exit 1;
+chomp $password; $password =~ s/^{[^}]*}//;
+
+my $pid = open2 \*OUT, \*IN, "/bin/mailconfig -rwp $passwdip";
+print IN $_ while (<OUT>);
+print IN "$username:$password\n";
+close OUT;
+close IN;

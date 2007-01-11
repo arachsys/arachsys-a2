@@ -4,7 +4,7 @@ use Fcntl qw(:DEFAULT :flock);
 use File::Basename;
 use strict;
 
-my $datafile = '/etc/tinydns/data';
+my $datafile = '/etc/tinydns/data.local';
 
 $0 = basename $0;
 umask 0077;
