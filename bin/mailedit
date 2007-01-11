@@ -83,7 +83,7 @@ while (1) {
   die "Failed to edit mail configuration\n" unless $? == 0;
 
   my $checkfile = new File::Temp;
-  my $pid = open2 \*OUT, \*IN, "/bin/mailconfig -rws $matchdomain";
+  my $pid = open2 \*OUT, \*IN, "/bin/mailconfig -rw $matchdomain";
   copy \*OUT, $checkfile->filename;
   close \*OUT;
 
@@ -94,7 +94,7 @@ while (1) {
     warn "Mail configuration has changed while you were editing\n";
     print STDERR "Save anyway? (y/n) ";
     exit 1 unless confirm;
-    system "/bin/mailconfig -ws $matchdomain <$editfile";
+    system "/bin/mailconfig -w $matchdomain <$editfile";
   } else {
     copy $editfile->filename, \*IN;
     close \*IN;

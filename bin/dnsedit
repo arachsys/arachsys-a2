@@ -72,7 +72,7 @@ while (1) {
   die "Failed to edit DNS records\n" unless $? == 0;
 
   my $checkfile = new File::Temp;
-  my $pid = open2 \*OUT, \*IN, "/bin/dnsconfig -rws $matchdomain";
+  my $pid = open2 \*OUT, \*IN, "/bin/dnsconfig -rw $matchdomain";
   copy \*OUT, $checkfile->filename;
   close \*OUT;
 
@@ -83,7 +83,7 @@ while (1) {
     warn "DNS records have changed while you were editing\n";
     print STDERR "Save anyway? (y/n) ";
     exit 1 unless confirm;
-    system "/bin/dnsconfig -ws $matchdomain <$editfile";
+    system "/bin/dnsconfig -w $matchdomain <$editfile";
   } else {
     copy $editfile->filename, \*IN;
     close \*IN;
