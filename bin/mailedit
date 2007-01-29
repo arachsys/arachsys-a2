@@ -81,6 +81,10 @@ copy $origfile->filename, $editfile->filename
 while (1) {
   system $editor, $editfile;
   die "Failed to edit mail configuration\n" unless $? == 0;
+  unless (compare $origfile->filename, $editfile->filename) {
+    warn "DNS records unmodified\n";
+    exit;
+  }
 
   my $checkfile = new File::Temp;
   my $pid = open2 \*OUT, \*IN, "/bin/mailconfig -rw $matchdomain";
@@ -94,6 +98,7 @@ while (1) {
     warn "Mail configuration has changed while you were editing\n";
     print STDERR "Save anyway? (y/n) ";
     exit 1 unless confirm;
+    $origfile = $checkfile;
     system "/bin/mailconfig -w $matchdomain <$editfile";
   } else {
     copy $editfile->filename, \*IN;

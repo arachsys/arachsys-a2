@@ -70,6 +70,10 @@ copy $origfile->filename, $editfile->filename
 while (1) {
   system $editor, $editfile;
   die "Failed to edit DNS records\n" unless $? == 0;
+  unless (compare $origfile->filename, $editfile->filename) {
+    warn "DNS records unmodified\n";
+    exit;
+  }
 
   my $checkfile = new File::Temp;
   my $pid = open2 \*OUT, \*IN, "/bin/dnsconfig -rw $matchdomain";
@@ -83,6 +87,7 @@ while (1) {
     warn "DNS records have changed while you were editing\n";
     print STDERR "Save anyway? (y/n) ";
     exit 1 unless confirm;
+    $origfile = $checkfile;
     system "/bin/dnsconfig -w $matchdomain <$editfile";
   } else {
     copy $editfile->filename, \*IN;
