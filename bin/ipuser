@@ -1,6 +1,6 @@
 #!/bin/perl -w
 
-use Arachsys::A2 qw(ipusers checkipuser);
+use Arachsys::A2 qw(ipusers checkipuser checkprivilege);
 use File::Basename;
 use Getopt::Std;
 use IO::Socket;
@@ -28,9 +28,9 @@ EOF
 sub HELP_MESSAGE { usage; }
 sub VERSION_MESSAGE { usage; }
 
-$0 = basename($0);
-my $privileged = $< == 0;
+my $privileged = checkprivilege;
 my %option = ();
+$0 = basename($0);
 usage unless getopts "Aaqr", \%option;
 
 $option{a} = 1 if $option{A};

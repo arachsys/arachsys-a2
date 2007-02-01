@@ -1,10 +1,8 @@
 #!/bin/perl -w
 
-use Arachsys::A2 qw(checkdomain checkdomainuser);
+use Arachsys::A2 qw(checkdomain checkdomainuser checkprivilege);
 use File::Basename;
 use strict;
-
-my $privileged = $< == 0;
 
 sub check($) {
   my $domain = lc shift;
@@ -29,6 +27,7 @@ $SIG{__DIE__} = sub { die "$0: $_[0]"; };
 $SIG{__WARN__} = sub { warn "$0: $_[0]"; };
 $SIG{INT} = $SIG{TERM} = sub { exit 1; };
 
+my $privileged = checkprivilege;
 $0 = basename $0;
 usage unless @ARGV == 2;
 

@@ -12,7 +12,8 @@ our @ISA = qw(Exporter);
 our $VERSION = 0.40;
 our @EXPORT = qw();
 our @EXPORT_OK = qw(nslist soalist txtlist checkdomain domainusers checkip
-                    ipusers checkuser checkdomainuser checkipuser);
+                    ipusers checkuser checkdomainuser checkipuser
+                    checkprivilege);
 
 my $resolver = new Net::DNS::Resolver;
 
@@ -127,13 +128,6 @@ sub checkdomainuser($) {
   return "" unless defined $domain;
   unless (exists $checkeddomains{$domain}) {
     $checkeddomains{$domain} = "";
-    my $staff = getgrnam "staff";
-    foreach my $group (split ' ', $() {
-      if ($group == $staff) {
-        $checkeddomains{$domain} = getpwuid $<;
-        return $checkeddomains{$domain};
-      }
-    }
     foreach my $username (domainusers $domain) {
       if (checkuser $username) {
         $checkeddomains{$domain} = $username;
@@ -151,6 +145,16 @@ sub checkipuser($) {
     return $< == 256*$3 + $4 ? scalar getpwuid $< : "";
   }
   return checkdomainuser "$4.$3.$2.$1.in-addr.arpa";
+}
+
+sub checkprivilege() {
+  return 1 if $< == 0;
+  my $staff = getgrnam "staff";
+  return 0 unless defined $staff;
+  foreach my $group (split ' ', $() {
+    return 1 if ($group == $staff);
+  }
+  return 0;
 }
 
 1;

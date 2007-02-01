@@ -1,14 +1,12 @@
 #!/bin/perl -w
 
-use Arachsys::A2 qw(checkdomain checkip checkdomainuser checkipuser);
+use Arachsys::A2 qw(checkdomain checkip checkdomainuser checkipuser checkprivilege);
 use Fcntl qw(:DEFAULT :flock);
 use File::Basename;
 use Getopt::Std;
 use strict;
 
 my $datafile = '/etc/tinydns/data.local';
-
-my $privileged = $< == 0;
 
 sub matchdomain($$) {
   my ($match, $domain) = @_;
@@ -69,6 +67,7 @@ EOF
 sub HELP_MESSAGE { usage; }
 sub VERSION_MESSAGE { usage; }
 
+my $privileged = checkprivilege;
 $0 = basename $0;
 $( = $) = 0;
 umask 0077;

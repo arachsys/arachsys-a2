@@ -1,6 +1,7 @@
 #!/bin/perl -w
 
-use Arachsys::A2 qw(checkdomain checkip checkdomainuser checkipuser);
+use Arachsys::A2 qw(checkdomain checkip checkdomainuser checkipuser
+                    checkprivilege);
 use File::Basename;
 use File::Compare;
 use File::Copy;
@@ -9,9 +10,6 @@ use Getopt::Std;
 use IPC::Open2;
 use Term::ReadKey;
 use strict;
-
-my $editor = $ENV{VISUAL} || $ENV{EDITOR} || "vi";
-my $privileged = $< == 0;
 
 sub confirm() {
   ReadMode 'cbreak';
@@ -37,6 +35,8 @@ $SIG{__DIE__} = sub { die "$0: $_[0]"; };
 $SIG{__WARN__} = sub { warn "$0: $_[0]"; };
 $SIG{INT} = $SIG{TERM} = sub { exit 1; };
 
+my $editor = $ENV{VISUAL} || $ENV{EDITOR} || "vi";
+my $privileged = checkprivilege;
 $0 = basename $0;
 umask 0077;
 
