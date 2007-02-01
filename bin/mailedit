@@ -82,7 +82,7 @@ while (1) {
   system $editor, $editfile;
   die "Failed to edit mail configuration\n" unless $? == 0;
   unless (compare $origfile->filename, $editfile->filename) {
-    warn "DNS records unmodified\n";
+    warn "Mail configuration unmodified\n";
     exit;
   }
 
