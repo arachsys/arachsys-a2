@@ -196,7 +196,8 @@ if (defined $passwdip) {
       if (not defined $user) {
         if (exists $oldcdb{"$address:user"}) {
           $user = $oldcdb{"$address:user"};
-          print STDERR "$0: Using previous user $user for $address\n";
+          print STDERR "$0: Using previous user $user for $address\n"
+            unless checkuser $user;
         } else {
           $user = checkdomainuser $domain;
         }
