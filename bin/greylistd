@@ -100,7 +100,7 @@ while (accept(CLIENT, SERVER)) {
     $senderdomain = "UNQUALIFIED" if $senderdomain eq "";
   }
 
-  my $fullkey = "$recipient $sender $host";
+  my $fullkey = "$recipient $senderdomain $host";
   my $domkey = "$senderdomain $host";
   my $now = time;
 
