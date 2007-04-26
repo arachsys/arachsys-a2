@@ -90,10 +90,10 @@ sub domainusers($) {
   do {
     foreach my $txt (txtlist $domain) {
       next unless $txt =~ $txtpattern;
-      push @txtusers, split /[\s,;:]+/, $1;
+      push @txtusers, split /[\s,;:]+/, lc $1;
     }
     foreach my $ns (soalist $domain, nslist $domain) {
-      push @nsusers, $1 if $ns =~ $nspattern;
+      push @nsusers, lc $1 if $ns =~ $nspattern;
     }
   } while (not @nsusers and $domain =~ s/^[^.]+\.//);
   return grep { ! $seen{$_} ++ } (@nsusers, @txtusers);
