@@ -18,6 +18,11 @@ my $addresspattern = qr/$localpattern\@$domainatom(?:\.$domainatom)*/;
 my $loginpattern = qr/[a-z0-9-=_][a-z0-9-=_.]*/;
 my $userpattern = qr/[a-z0-9-=_@][a-z0-9-=_.@]*/;
 
+sub sysdie(@) {
+  $! = 2;
+  die @_;
+}
+
 sub usage() {
   print STDERR <<EOF;
 Usage:  $0 DOMAIN  operate on addresses for DOMAIN
@@ -82,22 +87,22 @@ if ($option{p}) {
 my (%oldcdb, $newcdb, $forkpid);
 
 if (-e $cdbfile) {
-  tie %oldcdb, 'CDB_File', $cdbfile or die "CDB_File tie failed: $!\n";
+  tie %oldcdb, 'CDB_File', $cdbfile or sysdie "CDB_File tie failed: $!\n";
 } else {
   %oldcdb = ();
 }
 
 unless ($readonly) {
   sysopen LOCK, $cdbfile, O_RDWR|O_CREAT
-    or die "Unable to open '$cdbfile' for update: $!\n";
-  flock LOCK, LOCK_EX|LOCK_NB or die "Unable to lock '$cdbfile': $!\n";
+    or sysdie "Unable to open '$cdbfile' for update: $!\n";
+  flock LOCK, LOCK_EX|LOCK_NB or sysdie "Unable to lock '$cdbfile': $!\n";
   $SIG{__DIE__} = sub { unlink "${cdbfile}.tmp"; die "$0: $_[0]"; };
   $SIG{INT} = $SIG{TERM} = sub { unlink "${cdbfile}.tmp"; exit 1; };
   $newcdb = new CDB_File $cdbfile, "${cdbfile}.tmp"
-    or die "CDB_File create failed: $!\n";
+    or sysdie "CDB_File create failed: $!\n";
   unless ($silent) {
     $forkpid = fork;
-    die "Unable to fork: $!\n" unless defined $forkpid;
+    sysdie "Unable to fork: $!\n" unless defined $forkpid;
   }
 }
 
@@ -233,5 +238,5 @@ if (defined $passwdip) {
 }
 
 die "Errors in configuration\n" if $errors > 0;
-$newcdb->finish or die "CDB_File finish failed: $!\n";
+$newcdb->finish or sysdie "CDB_File finish failed: $!\n";
 exit 0

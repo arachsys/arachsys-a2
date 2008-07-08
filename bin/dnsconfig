@@ -52,6 +52,11 @@ sub maxlength($$) {
   return defined $str ? length $str <= $len : 1;
 }
 
+sub sysdie(@) {
+  $! = 2;
+  die @_;
+}
+
 sub usage() {
   print STDERR <<EOF;
 Usage:  $0 DOMAIN  operate on DNS data below DOMAIN
@@ -103,20 +108,20 @@ if (not $option{a} and @ARGV == 1) {
 my $forkpid;
 unless ($readonly) {
   sysopen LOCK, $datafile, O_RDWR|O_CREAT
-    or die "Unable to open '$datafile' for update: $!\n";
-  flock LOCK, LOCK_EX|LOCK_NB or die "Unable to lock '$datafile': $!\n";
+    or sysdie "Unable to open '$datafile' for update: $!\n";
+  flock LOCK, LOCK_EX|LOCK_NB or sysdie "Unable to lock '$datafile': $!\n";
   $SIG{__DIE__} = sub { unlink "${datafile}.tmp"; die "$0: $_[0]"; };
   $SIG{INT} = $SIG{TERM} = sub { unlink "${datafile}.tmp"; exit 1; };
   sysopen NEWDATA, "${datafile}.tmp", O_WRONLY|O_CREAT
-    or die "Unable to create '${datafile}.tmp': $!\n";
+    or sysdie "Unable to create '${datafile}.tmp': $!\n";
   unless ($silent) {
     $forkpid = fork;
-    die "Unable to fork: $!\n" unless defined $forkpid;
+    sysdie "Unable to fork: $!\n" unless defined $forkpid;
   }
 }
 
 sysopen OLDDATA, $datafile, O_RDONLY
-  or die "Unable to open '$datafile' for reading: $!\n";
+  or sysdie "Unable to open '$datafile' for reading: $!\n";
 
 if ($readonly or not $silent and $forkpid == 0) {
   close(STDIN);
