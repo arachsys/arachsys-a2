@@ -102,14 +102,30 @@ while (accept(CLIENT, SERVER)) {
 
   my $fullkey = "$recipient $sender $host";
   my $domkey = "$senderdomain $host";
+  my $wildkey = "* $host";
   my $now = time;
+
+  if (exists $greylist{$wildkey}) {
+    my ($first, $last) = unpack "LL", $greylist{$wildkey};
+    if ($now > $last + $confirmedtimeout) {
+      delete $greylist{$wildkey};
+    } else {
+      if ($last != 0) {
+        $greylist{$wildkey} = pack "LL", $first, $now;
+      }
+      result *CLIENT, "true";
+      next;
+    }
+  }
 
   if (exists $greylist{$domkey}) {
     my ($first, $last) = unpack "LL", $greylist{$domkey};
     if ($now > $last + $confirmedtimeout) {
       delete $greylist{$domkey};
     } else {
-      $greylist{$domkey} = pack "LL", $first, $now;
+      if ($last != 0) {
+        $greylist{$domkey} = pack "LL", $first, $now;
+      }
       result *CLIENT, "true";
       next;
     }
