@@ -33,7 +33,7 @@ die "Invalid username '$username'\n"
 my $password = `dovecotpw -s PLAIN` or exit 1;
 chomp $password; $password =~ s/^{[^}]*}//;
 
-my $pid = open2 \*OUT, \*IN, "/bin/mailconfig -rwp $passwdip";
+my $pid = open2 \*OUT, \*IN, "mailconfig -rwp $passwdip";
 print IN $_ while (<OUT>);
 print IN "$username:$password\n";
 close OUT;

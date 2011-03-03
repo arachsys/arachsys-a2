@@ -30,7 +30,7 @@ my $username = $ARGV[1];
 die "Invalid username '$username'\n"
   unless $username =~ /^$userpattern$/;
 
-my $pid = open2 \*OUT, \*IN, "/bin/mailconfig -rwp $passwdip";
+my $pid = open2 \*OUT, \*IN, "mailconfig -rwp $passwdip";
 while (<OUT>) {
   print IN $_ unless (split /[:\n]/)[0] eq $username;
 }

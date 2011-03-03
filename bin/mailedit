@@ -73,7 +73,7 @@ if ($option{p}) {
 my $editfile = new File::Temp;
 my $origfile = new File::Temp;
 
-system "/bin/mailconfig -r $matchdomain >$origfile";
+system "mailconfig -r $matchdomain >$origfile";
 die "Failed to read mail configuration for editing\n" unless $? == 0;
 copy $origfile->filename, $editfile->filename
   or die "Failed to create file for editing\n";
@@ -87,7 +87,7 @@ while (1) {
   }
 
   my $checkfile = new File::Temp;
-  my $pid = open2 \*OUT, \*IN, "/bin/mailconfig -rw $matchdomain";
+  my $pid = open2 \*OUT, \*IN, "mailconfig -rw $matchdomain";
   copy \*OUT, $checkfile->filename;
   close \*OUT;
 
@@ -99,7 +99,7 @@ while (1) {
     print STDERR "Save anyway? (y/n) ";
     exit 1 unless confirm;
     $origfile = $checkfile;
-    system "/bin/mailconfig -w $matchdomain <$editfile";
+    system "mailconfig -w $matchdomain <$editfile";
   } else {
     copy $editfile->filename, \*IN;
     close \*IN;
